@@ -215,6 +215,8 @@ textarea {
   min-height: 124px;
   padding: 12px;
   line-height: 1.6;
+  overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 input:focus,
@@ -226,13 +228,16 @@ textarea:focus {
 }
 
 .stretch-field {
-  flex: 1;
-  min-height: 340px;
+  flex: 0 0 auto;
+  min-height: 0;
 }
 
 .stretch-field textarea {
-  flex: 1;
-  min-height: 340px;
+  height: clamp(360px, calc(100vh - 430px), 620px);
+  min-height: 360px;
+  max-height: 620px;
+  resize: none;
+  overflow-y: auto;
 }
 
 .option-grid {
@@ -600,9 +605,12 @@ button:disabled {
 }
 
 .phone-frame {
-  flex: 1;
-  min-height: 540px;
+  flex: 0 0 auto;
+  height: clamp(520px, calc(100vh - 260px), 780px);
+  min-height: 0;
+  max-height: 780px;
   overflow: auto;
+  scrollbar-gutter: stable;
   border-radius: 18px;
   border: 10px solid #1d2a24;
   background: #eef2ef;
@@ -638,10 +646,14 @@ button:disabled {
 }
 
 #htmlOutput {
-  min-height: 176px;
+  height: 220px;
+  min-height: 0;
+  max-height: 220px;
   margin-top: 10px;
   font-family: Consolas, "SFMono-Regular", "Liberation Mono", monospace;
   font-size: 12px;
+  resize: none;
+  overflow: auto;
 }
 
 .compat-report {
@@ -698,11 +710,18 @@ button:disabled {
 
   .stretch-field,
   .stretch-field textarea {
-    min-height: 280px;
+    min-height: 320px;
+  }
+
+  .stretch-field textarea {
+    height: 52vh;
+    max-height: 560px;
   }
 
   .phone-frame {
-    min-height: 480px;
+    height: 62vh;
+    min-height: 420px;
+    max-height: 680px;
     padding: 10px;
     border-width: 6px;
   }
