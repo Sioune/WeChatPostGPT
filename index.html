@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WeChatPostGPT 智能公众号排版体</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Local-first WeChat typesetting agent</p>
+          <h1>WeChatPostGPT</h1>
+        </div>
+        <div class="topbar-actions">
+          <span id="aiStatusBadge" class="badge">AI 状态检测中</span>
+          <details class="ai-config-menu">
+            <summary class="ghost-btn">AI 配置</summary>
+            <section class="ai-config-panel" aria-label="AI 配置">
+              <label class="field">
+                <span>BaseUrl</span>
+                <input id="aiBaseUrlInput" type="url" placeholder="https://api.openai.com/v1" />
+              </label>
+              <label class="field">
+                <span>API Key</span>
+                <input id="aiApiKeyInput" type="password" autocomplete="off" placeholder="sk-..." />
+              </label>
+              <label class="field">
+                <span>模型类型</span>
+                <select id="aiModelSelect">
+                  <option value="">请先测试连接</option>
+                </select>
+              </label>
+              <div class="learner-actions">
+                <button id="testAiConfigBtn" class="ghost-btn" type="button">测试连接</button>
+                <button id="saveAiConfigBtn" class="primary-btn" type="button">保存配置</button>
+                <button id="clearAiConfigBtn" class="ghost-btn" type="button">清除</button>
+              </div>
+              <p id="aiConfigStatus" class="hint"></p>
+            </section>
+          </details>
+          <button id="loadSampleBtn" class="ghost-btn" type="button">载入示例</button>
+          <button id="generateTemplateBtn" class="ghost-btn" type="button">AI 生成模板</button>
+          <a class="primary-link" href="https://mp.weixin.qq.com/" target="_blank" rel="noreferrer">打开公众号后台</a>
+        </div>
+      </header>
+
+      <section class="workspace" aria-label="公众号文章智能排版工作台">
+        <section class="panel editor-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Step 1</p>
+              <h2>输入文章</h2>
+            </div>
+            <button id="clearBtn" class="icon-btn" type="button" title="清空输入">×</button>
+          </div>
+
+          <label class="field">
+            <span>文章标题</span>
+            <input id="titleInput" type="text" placeholder="例如：为什么好内容也需要一套可靠的版式" />
+          </label>
+
+          <label class="field stretch-field">
+            <span>正文内容</span>
+            <textarea id="contentInput" spellcheck="false" placeholder="粘贴正文。支持普通文本，也支持 # 标题、> 引用、- 列表、Markdown 图片和链接。"></textarea>
+          </label>
+
+          <details class="image-tools" open>
+            <summary>图片排版</summary>
+            <div class="image-tool-grid">
+              <label class="field">
+                <span>图片说明</span>
+                <input id="imageCaptionInput" type="text" placeholder="可选，会作为图片注释" />
+              </label>
+              <label class="field">
+                <span>图片宽度</span>
+                <select id="imageWidthSelect">
+                  <option value="100">100%</option>
+                  <option value="90" selected>90%</option>
+                  <option value="75">75%</option>
+                  <option value="60">60%</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>图片样式</span>
+                <select id="imageStyleSelect">
+                  <option value="clean">干净留白</option>
+                  <option value="framed" selected>细边框</option>
+                  <option value="card">卡片衬底</option>
+                  <option value="poster">海报强调</option>
+                </select>
+              </label>
+            </div>
+            <div class="learner-actions">
+              <label class="file-btn">
+                上传并插入图片
+                <input id="articleImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple />
+              </label>
+              <button id="insertImageUrlBtn" class="ghost-btn" type="button">插入图片 URL</button>
+              <button id="compactImagesBtn" class="ghost-btn" type="button">收纳正文 base64</button>
+            </div>
+            <div id="imageLibrary" class="image-library"></div>
+            <p id="imageSummary" class="hint">上传图片会保存到本地图片素材库，正文里只插入短引用；正式发布前建议替换为微信素材库图片地址。</p>
+          </details>
+
+          <div class="option-grid">
+            <label class="field">
+              <span>排版引擎</span>
+              <select id="engineSelect">
+                <option value="ai" selected>AI 决策 + 本地渲染</option>
+                <option value="local">仅本地规则</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>模板模式</span>
+              <select id="modeSelect">
+                <option value="auto">自动选模</option>
+                <option value="generate">内容驱动生成</option>
+                <option value="manual">手动指定</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>版面密度</span>
+              <select id="densitySelect">
+                <option value="relaxed">舒展</option>
+                <option value="balanced" selected>均衡</option>
+                <option value="compact">紧凑</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="checkbox-field">
+            <input id="smartStructureToggle" type="checkbox" checked />
+            <span>自动识别标题、金句、要点与段落层级</span>
+          </label>
+
+          <button id="renderBtn" class="primary-btn" type="button">智能排版</button>
+        </section>
+
+        <section class="panel agent-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Step 2</p>
+              <h2>智能体决策</h2>
+            </div>
+            <span id="templateCountBadge" class="badge">8 套模板</span>
+          </div>
+
+          <div id="analysisCards" class="analysis-cards" aria-live="polite"></div>
+
+          <div class="section-heading">
+            <h3>模板库</h3>
+            <span>整体版式，不只是配色</span>
+          </div>
+          <div class="template-controls">
+            <label class="field">
+              <span>查找模板</span>
+              <input id="templateSearchInput" type="search" placeholder="名称、描述、标签" />
+            </label>
+            <label class="field">
+              <span>风格筛选</span>
+              <select id="templateFamilyFilter">
+                <option value="all">全部风格</option>
+                <option value="insight">深度洞察</option>
+                <option value="business">商业</option>
+                <option value="tech">科技</option>
+                <option value="human">人文</option>
+                <option value="event">活动</option>
+                <option value="education">知识</option>
+                <option value="brand">品牌</option>
+                <option value="data">数据</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>来源筛选</span>
+              <select id="templateSourceFilter">
+                <option value="all">全部来源</option>
+                <option value="default">内置</option>
+                <option value="custom">自定义/学习</option>
+                <option value="ai">AI 临时</option>
+              </select>
+            </label>
+          </div>
+          <div id="templateGallery" class="template-gallery"></div>
+
+          <details class="learner" open>
+            <summary>学习参考文章模板</summary>
+            <label class="field">
+              <span>模板名称</span>
+              <input id="learnNameInput" type="text" placeholder="例如：品牌采访风" />
+            </label>
+            <label class="field">
+              <span>参考文章 URL</span>
+              <input id="referenceUrlInput" type="url" placeholder="https://example.com/article.html" />
+            </label>
+            <label class="field">
+              <span>直接粘贴已排版文章富文本</span>
+              <div
+                id="referencePasteBox"
+                class="rich-paste-box"
+                contenteditable="true"
+                role="textbox"
+                aria-label="直接粘贴富文本"
+              ></div>
+            </label>
+            <label class="field">
+              <span>学习源码预览</span>
+              <textarea id="referenceInput" spellcheck="false" placeholder="这里会自动保存粘贴富文本转换出的 HTML，也可以手动粘贴 HTML。"></textarea>
+            </label>
+            <div class="learner-actions">
+              <label class="file-btn">
+                上传文件
+                <input id="referenceFileInput" type="file" accept=".html,.htm,.txt,.md" />
+              </label>
+              <button id="fetchReferenceBtn" class="ghost-btn" type="button">抓取 URL</button>
+              <button id="learnTemplateBtn" class="ghost-btn" type="button">学习为模板</button>
+            </div>
+            <p id="learnSummary" class="hint"></p>
+          </details>
+        </section>
+
+        <section class="panel preview-panel">
+          <div class="preview-toolbar">
+            <div>
+              <p class="eyebrow">Step 3</p>
+              <h2>微信兼容预览</h2>
+            </div>
+            <div class="preview-actions">
+              <button id="copyRichBtn" class="primary-btn" type="button">复制富文本</button>
+              <button id="copyHtmlBtn" class="ghost-btn" type="button">复制 HTML</button>
+            </div>
+          </div>
+
+          <div id="statusLine" class="status-line">等待输入文章内容。</div>
+          <div class="phone-frame">
+            <article id="wechatCanvas" class="wechat-canvas" contenteditable="true" aria-label="公众号排版结果"></article>
+          </div>
+
+          <details class="source-box">
+            <summary>查看微信内联 HTML 与兼容检查</summary>
+            <textarea id="htmlOutput" readonly spellcheck="false"></textarea>
+            <div id="compatReport" class="compat-report"></div>
+          </details>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

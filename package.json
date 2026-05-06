@@ -1,0 +1,13 @@
+{
+  "name": "wechatpostgpt",
+  "version": "0.2.0",
+  "private": true,
+  "description": "AI-assisted WeChat official account article typesetting tool.",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check app.js && node --check server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
