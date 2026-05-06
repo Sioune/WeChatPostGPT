@@ -343,6 +343,37 @@ async function renderFromInput(options = {}) {
   let displayAnalysis = analysis;
   let density = els.density.value;
   let aiPlan = null;
+  let statusOverride = "";
+
+  if (options.useAi && els.engine.value === "native") {
+    if (!aiStatus.aiEnabled) {
+      statusOverride = "AI 原生创意排版需要可用的 AI 配置，已使用本地规则预览";
+    } else {
+      els.statusLine.textContent = `AI 正在进行原生创意排版，使用模型 ${aiStatus.model}。`;
+      els.render.disabled = true;
+      try {
+        const nativeLayout = await requestAiNativeLayout(title, content, analysis);
+        if (seq !== renderSeq) return;
+        const html = hydrateNativeImageSources(nativeLayout.html);
+        lastHtml = html;
+        lastPlainText = nativeLayout.plainText || docToPlainText(doc);
+        els.canvas.innerHTML = html;
+        els.htmlOutput.value = html;
+        els.statusLine.textContent = `${nativeLayout.designSummary?.styleName || "AI 原生创意排版"}｜AI 已直接生成富媒体 HTML｜${analysis.typeLabel}｜约 ${analysis.readingMinutes} 分钟读完`;
+        els.learnSummary.textContent =
+          "AI 原生创意排版已生成。若要把这次效果沉淀为结构化模板，可复制右侧 HTML 到参考文章学习区再学习为模板。";
+        renderNativeAnalysis(analysis, nativeLayout);
+        renderTemplateGallery(selectedTemplateId);
+        renderCompatReport(html);
+        return;
+      } catch (error) {
+        if (seq !== renderSeq) return;
+        statusOverride = `AI 原生创意排版失败，已退回本地规则：${error.message}`;
+      } finally {
+        els.render.disabled = false;
+      }
+    }
+  }
 
   if (options.useAi && els.engine.value === "ai") {
     if (!aiStatus.aiEnabled) {
@@ -386,7 +417,8 @@ async function renderFromInput(options = {}) {
     template = persistedAiTemplate.template;
   }
   if (!aiPlan || !options.useAi || els.statusLine.textContent.startsWith("AI 决策失败")) {
-    els.statusLine.textContent = `${template.name}｜${analysis.typeLabel}｜约 ${analysis.readingMinutes} 分钟读完｜${doc.stats.blockCount} 个内容块`;
+    const prefix = statusOverride ? `${statusOverride}｜` : "";
+    els.statusLine.textContent = `${prefix}${template.name}｜${analysis.typeLabel}｜约 ${analysis.readingMinutes} 分钟读完｜${doc.stats.blockCount} 个内容块`;
   } else {
     const persistNote = persistedAiTemplate
       ? persistedAiTemplate.created
@@ -606,6 +638,25 @@ async function requestAiLayout(title, content, analysis, overrides = {}) {
     body: JSON.stringify(payload)
   });
   return data.plan;
+}
+
+async function requestAiNativeLayout(title, content, analysis) {
+  const payload = {
+    title,
+    content: stripNativeAiContent(content),
+    localAnalysis: analysis,
+    densityPreference: els.density.value,
+    aiConfig: getAiClientConfig()
+  };
+  const data = await requestJson("/api/ai-native-layout", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  return {
+    ...(data.native || {}),
+    model: data.model || aiStatus.model,
+    endpoint: data.endpoint || ""
+  };
 }
 
 async function requestAiLearnTemplate(source, name) {
@@ -2689,6 +2740,27 @@ function renderAnalysis(analysis, template, aiPlan) {
     .join("");
 }
 
+function renderNativeAnalysis(analysis, nativeLayout) {
+  const summary = nativeLayout.designSummary || {};
+  const rules = Array.isArray(summary.layoutRules) ? summary.layoutRules.slice(0, 2).join("；") : "";
+  const cards = [
+    ["内容类型", analysis.typeLabel, analysis.tone || "AI 已完成内容定位。"],
+    ["原生设计", summary.styleName || "AI 原生创意排版", summary.visualDNA || "模型直接生成完整富媒体 HTML。"],
+    ["配色判断", summary.colorRationale || "由 AI 根据正文气质自由选择配色。", rules || "版式不受本地模板枚举限制。"],
+    [
+      "交付方式",
+      "可复制富文本",
+      (nativeLayout.warnings || []).slice(0, 2).join("；") || "已通过本地清洗与微信兼容检查。"
+    ]
+  ];
+  els.analysisCards.innerHTML = cards
+    .map(
+      ([label, value, desc]) =>
+        `<div class="analysis-card"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span><p>${escapeHtml(desc)}</p></div>`
+    )
+    .join("");
+}
+
 function renderAnalysisPlaceholder() {
   els.analysisCards.innerHTML = [
     ["内容类型", "等待分析", "输入标题和正文后自动判断文章气质。"],
@@ -2800,6 +2872,20 @@ function stripInlineImageData(content) {
   return String(content || "")
     .replace(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, "[本地上传图片 data URL 已省略]")
     .replace(/wechatpostgpt:image:[a-zA-Z0-9_-]+/g, "[本地图片素材引用]");
+}
+
+function stripNativeAiContent(content) {
+  return String(content || "").replace(
+    /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi,
+    "[图片 data URL 已省略，请保留图片位置]"
+  );
+}
+
+function hydrateNativeImageSources(html) {
+  return String(html || "").replace(/\ssrc=(["'])(wechatpostgpt:image:[a-zA-Z0-9_-]+)\1/gi, (_match, quote, src) => {
+    const resolved = resolveImageAssetUrl(src);
+    return ` src=${quote}${resolved || src}${quote}`;
+  });
 }
 
 function formatBytes(value) {

@@ -200,6 +200,35 @@ const TEMPLATE_LEARNING_SCHEMA = {
   additionalProperties: false
 };
 
+const NATIVE_LAYOUT_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    html: { type: "string" },
+    plainText: { type: "string" },
+    designSummary: {
+      type: "object",
+      properties: {
+        styleName: { type: "string" },
+        visualDNA: { type: "string" },
+        layoutRules: {
+          type: "array",
+          items: { type: "string" }
+        },
+        colorRationale: { type: "string" }
+      },
+      required: ["styleName", "visualDNA", "layoutRules", "colorRationale"],
+      additionalProperties: false
+    },
+    warnings: {
+      type: "array",
+      items: { type: "string" }
+    }
+  },
+  required: ["title", "html", "plainText", "designSummary", "warnings"],
+  additionalProperties: false
+};
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -222,6 +251,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/ai-layout") {
       await handleAiLayout(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/ai-native-layout") {
+      await handleAiNativeLayout(req, res);
       return;
     }
 
@@ -271,6 +305,28 @@ async function handleAiLayout(req, res) {
   const plan = parsePlan(response.output_text);
   sendJson(res, 200, {
     plan,
+    model: config.model,
+    endpoint: response.endpoint || "",
+    usage: response.usage || null
+  });
+}
+
+async function handleAiNativeLayout(req, res) {
+  const payload = await readJsonBody(req);
+  const config = getAiConfig(payload);
+  if (!config.apiKey) {
+    sendJson(res, 503, {
+      error: "AI not configured",
+      detail: "请在右上角 AI 配置中填写 BaseUrl、API Key，测试连接后选择模型。"
+    });
+    return;
+  }
+
+  const cleanPayload = sanitizeNativePayload(payload);
+  const response = await callOpenAIForNativeLayout(cleanPayload, config);
+  const native = parseNativeLayout(response.output_text);
+  sendJson(res, 200, {
+    native,
     model: config.model,
     endpoint: response.endpoint || "",
     usage: response.usage || null
@@ -504,6 +560,51 @@ async function callOpenAI(payload, config) {
     userContent,
     schemaName: "wechat_layout_plan",
     schema: LAYOUT_SCHEMA
+  });
+}
+
+async function callOpenAIForNativeLayout(payload, config) {
+  const systemContent = [
+    "你是顶级微信公众号富媒体排版设计师。你要直接生成可复制到公众号后台的完整 inline HTML，而不是模板令牌。",
+    "这是 AI 原生创意排版模式：不受本项目模板 schema 限制，可以自由设计文头、导语、信息块、强调块、分隔、图片框、结尾和整体节奏。",
+    "目标只有一个：输出高质量、有美感、贴合文章内容、配色吸引人、移动端阅读舒服的公众号富文本成果。",
+    "硬性兼容边界：不要使用 script、style 标签、link、iframe、form、input、button、svg、canvas、video、audio；不要使用外部 CSS、事件属性、position、动画、媒体查询或复杂交互。",
+    "所有样式必须写在元素 inline style 中。优先使用 section、p、span、strong、em、blockquote、img、a、table、ul、ol、li、hr、br 等静态标签。",
+    "不要编造事实，不要大幅改写正文；可以增加少量导读标签、栏目名、强调容器和过渡句，但必须服务原文。",
+    "如果正文里有 Markdown 图片，请在 HTML 中保留同一个图片 src；本地图片引用 wechatpostgpt:image:* 也要原样放入 img src。",
+    "只输出符合 JSON Schema 的对象，其中 html 字段是最终可复制的富媒体 HTML。"
+  ].join("\n");
+  const userContent = JSON.stringify(payload);
+  const body = {
+    model: config.model,
+    input: [
+      {
+        role: "system",
+        content: systemContent
+      },
+      {
+        role: "user",
+        content: userContent
+      }
+    ],
+    reasoning: { effort: "medium" },
+    text: {
+      format: {
+        type: "json_schema",
+        name: "wechat_native_layout",
+        schema: NATIVE_LAYOUT_SCHEMA,
+        strict: true
+      }
+    }
+  };
+
+  return callAiWithFallback({
+    config,
+    responseBody: body,
+    systemContent,
+    userContent,
+    schemaName: "wechat_native_layout",
+    schema: NATIVE_LAYOUT_SCHEMA
   });
 }
 
@@ -805,6 +906,33 @@ function parsePlan(outputText) {
   }
 }
 
+function parseNativeLayout(outputText) {
+  try {
+    const parsed = parseJsonPayload(outputText, "AI native layout");
+    const html = sanitizeNativeHtml(parsed.html);
+    const plainText = String(parsed.plainText || stripHtmlText(html)).replace(/\s+/g, " ").trim();
+    if (plainText.length < 10 || !/<[a-z][\s\S]*>/i.test(html)) {
+      throw new Error("AI native layout did not include usable HTML.");
+    }
+    return {
+      title: String(parsed.title || "").slice(0, 120),
+      html,
+      plainText,
+      designSummary: {
+        styleName: String(parsed.designSummary?.styleName || "AI 原生创意排版").slice(0, 60),
+        visualDNA: String(parsed.designSummary?.visualDNA || "AI 直接生成的公众号富媒体版式。").slice(0, 240),
+        layoutRules: Array.isArray(parsed.designSummary?.layoutRules)
+          ? parsed.designSummary.layoutRules.slice(0, 8).map((item) => String(item).slice(0, 120))
+          : [],
+        colorRationale: String(parsed.designSummary?.colorRationale || "").slice(0, 180)
+      },
+      warnings: Array.isArray(parsed.warnings) ? parsed.warnings.slice(0, 6).map((item) => String(item).slice(0, 120)) : []
+    };
+  } catch (error) {
+    throw new Error(`Failed to parse AI native layout: ${error.message}`);
+  }
+}
+
 function parseJsonPayload(outputText, label) {
   const text = String(outputText || "").trim();
   const candidates = [
@@ -1016,6 +1144,31 @@ function sanitizePayload(payload) {
       modePreference === "generate"
         ? "请返回一个 JSON 排版计划。当前是内容驱动生成模式：必须生成新模板，decision.mode 必须是 generate_new，selectedTemplateId 必须为空字符串。请让模板在整体结构、视觉节奏和组件组合上明显服务于这篇文章。"
         : "请返回一个 JSON 排版计划。优先选择已有模板；只有在现有模板明显无法承载文章气质时才生成新模板。"
+  };
+}
+
+function sanitizeNativePayload(payload) {
+  const title = String(payload?.title || "").slice(0, 160);
+  const content = String(payload?.content || "")
+    .replace(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, "[图片 data URL 已省略，请保留图片位置]")
+    .slice(0, 48_000);
+  const localAnalysis = payload?.localAnalysis || {};
+  return {
+    title,
+    content,
+    densityPreference: String(payload?.densityPreference || "balanced"),
+    localAnalysis: {
+      type: String(localAnalysis.type || "general"),
+      typeLabel: String(localAnalysis.typeLabel || "通用长文"),
+      tone: String(localAnalysis.tone || ""),
+      paragraphCount: Number(localAnalysis.paragraphCount || 0),
+      headingCount: Number(localAnalysis.headingCount || 0),
+      hasCode: Boolean(localAnalysis.hasCode),
+      hasManyNumbers: Boolean(localAnalysis.hasManyNumbers),
+      readingMinutes: Number(localAnalysis.readingMinutes || 1)
+    },
+    instruction:
+      "请以内容原生设计方式直接排版这篇文章，输出公众号兼容 inline HTML。尽可能发挥审美和创意，但不要牺牲移动端可读性与微信粘贴兼容性。"
   };
 }
 
@@ -1281,6 +1434,144 @@ function isVoidTag(tagName) {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sanitizeNativeHtml(html) {
+  let clean = String(html || "")
+    .replace(/^```(?:html)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  const bodyMatch = clean.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
+  if (bodyMatch) clean = bodyMatch[1];
+
+  clean = clean
+    .replace(/<!doctype[\s\S]*?>/gi, "")
+    .replace(/<head\b[\s\S]*?<\/head>/gi, "")
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, "")
+    .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, "")
+    .replace(/<form\b[\s\S]*?<\/form>/gi, "")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
+    .replace(/<canvas\b[\s\S]*?<\/canvas>/gi, "")
+    .replace(/<video\b[\s\S]*?<\/video>/gi, "")
+    .replace(/<audio\b[\s\S]*?<\/audio>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<\/?(html|body|meta|title|link)\b[^>]*>/gi, "");
+
+  const allowed = new Set([
+    "section",
+    "div",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "p",
+    "span",
+    "strong",
+    "b",
+    "em",
+    "i",
+    "blockquote",
+    "code",
+    "pre",
+    "img",
+    "a",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "td",
+    "th",
+    "ul",
+    "ol",
+    "li",
+    "br",
+    "hr"
+  ]);
+
+  clean = clean.replace(/<\/?([a-z][\w:-]*)\b[^>]*>/gi, (match, tagName) => {
+    const tag = tagName.toLowerCase();
+    if (!allowed.has(tag)) return "";
+    return sanitizeNativeTag(match, tag);
+  });
+
+  const rootStyle = [
+    "max-width:677px",
+    "margin:0 auto",
+    "padding:18px",
+    "background:#ffffff",
+    "color:#1f2933",
+    "font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',Arial,sans-serif",
+    "box-sizing:border-box"
+  ].join(";");
+  return `<section data-wechatpostgpt-native="article" style="${rootStyle}">${clean}</section>`;
+}
+
+function sanitizeNativeTag(match, tag) {
+  if (/^<\//.test(match)) return isVoidTag(tag) ? "" : `</${tag}>`;
+  const attrs = [];
+  const style = sanitizeInlineStyle(readAttribute(match, "style"));
+  if (style) attrs.push(`style="${escapeAttribute(style)}"`);
+
+  if (tag === "a") {
+    const href = sanitizeNativeUrl(readAttribute(match, "href"));
+    if (href) attrs.push(`href="${escapeAttribute(href)}"`);
+  }
+
+  if (tag === "img") {
+    const src = sanitizeNativeUrl(readAttribute(match, "src"));
+    const alt = readAttribute(match, "alt");
+    if (!src) return "";
+    attrs.push(`src="${escapeAttribute(src)}"`);
+    attrs.push(`alt="${escapeAttribute(alt || "图片")}"`);
+    if (!style) attrs.push('style="max-width:100%;height:auto;display:block;margin:0 auto"');
+  }
+
+  if (["td", "th"].includes(tag)) {
+    const colspan = clampInt(readAttribute(match, "colspan"), 1, 12, 1);
+    const rowspan = clampInt(readAttribute(match, "rowspan"), 1, 20, 1);
+    if (colspan > 1) attrs.push(`colspan="${colspan}"`);
+    if (rowspan > 1) attrs.push(`rowspan="${rowspan}"`);
+  }
+
+  const suffix = isVoidTag(tag) ? "" : "";
+  return `<${tag}${attrs.length ? ` ${attrs.join(" ")}` : ""}${suffix}>`;
+}
+
+function sanitizeInlineStyle(value) {
+  return String(value || "")
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const [rawName, ...rawValue] = part.split(":");
+      const name = String(rawName || "").trim().toLowerCase();
+      const styleValue = rawValue.join(":").trim();
+      if (!name || !styleValue) return false;
+      if (/^(position|z-index|animation|transition|transform|filter|backdrop-filter|behavior)$/i.test(name)) return false;
+      if (/expression\s*\(|javascript:|@media|@keyframes|url\s*\(\s*['"]?\s*javascript:/i.test(styleValue)) return false;
+      return /^[a-z-]+$/.test(name);
+    })
+    .join(";");
+}
+
+function sanitizeNativeUrl(value) {
+  const url = String(value || "").trim().replace(/"/g, "%22");
+  if (!url) return "";
+  if (/^(https?:)?\/\//i.test(url)) return url;
+  if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(url)) return url;
+  if (/^wechatpostgpt:image:[a-zA-Z0-9_-]+$/.test(url)) return url;
+  if (/^#[a-zA-Z0-9_-]+$/.test(url)) return url;
+  return "";
+}
+
+function escapeAttribute(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function validateReferenceSource(distilled, options = {}) {
