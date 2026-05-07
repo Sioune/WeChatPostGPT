@@ -1,6 +1,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const { Pool } = require("pg");
 
 loadEnvFile(path.join(__dirname, ".env"));
 
@@ -14,6 +15,32 @@ const MAX_DISTILLED_REFERENCE_BYTES = 420_000;
 const MAX_AI_REFERENCE_BYTES = 55_000;
 const FETCH_TIMEOUT_MS = 12_000;
 const AI_REQUEST_TIMEOUT_MS = 180_000;
+
+const pool = new Pool();
+
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS templates (
+      id TEXT PRIMARY KEY,
+      source TEXT NOT NULL DEFAULT 'custom',
+      name TEXT NOT NULL,
+      family TEXT NOT NULL DEFAULT 'insight',
+      description TEXT DEFAULT '',
+      tags JSONB DEFAULT '[]',
+      colors JSONB NOT NULL DEFAULT '{}',
+      rhythm JSONB NOT NULL DEFAULT '{}',
+      design JSONB,
+      schema_version INTEGER DEFAULT 2,
+      ai_summary JSONB,
+      ai_model TEXT DEFAULT '',
+      ai_fingerprint TEXT DEFAULT '',
+      is_builtin BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+}
+initDb().catch((e) => console.error("[db] init failed:", e.message));
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -269,6 +296,22 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/templates") {
+      await handleGetTemplates(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/templates") {
+      await handleSaveTemplate(req, res);
+      return;
+    }
+
+    if (req.method === "DELETE" && url.pathname.startsWith("/api/templates/")) {
+      const templateId = decodeURIComponent(url.pathname.slice("/api/templates/".length));
+      await handleDeleteTemplate(req, res, templateId);
+      return;
+    }
+
     if (req.method !== "GET" && req.method !== "HEAD") {
       sendJson(res, 405, { error: "Method not allowed" });
       return;
@@ -429,9 +472,11 @@ async function handleAiNativeLayoutStream(req, res) {
       { role: "system", content: systemContent },
       { role: "user", content: userContent }
     ],
-    response_format: { type: "json_object" },
     stream: true
   };
+  if (!isAnthropicModel(config.model)) {
+    requestBody.response_format = { type: "json_object" };
+  }
 
   try {
     const apiResponse = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -726,6 +771,74 @@ async function handleAiLearnTemplate(req, res) {
   });
 }
 
+async function handleGetTemplates(req, res) {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM templates ORDER BY is_builtin DESC, created_at ASC"
+    );
+    sendJson(res, 200, { templates: result.rows });
+  } catch (error) {
+    console.error("[db] handleGetTemplates:", error.message);
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleSaveTemplate(req, res) {
+  const payload = await readJsonBody(req);
+  const t = payload?.template;
+  if (!t?.id || !t?.name) {
+    sendJson(res, 400, { error: "template.id and template.name are required" });
+    return;
+  }
+  try {
+    await pool.query(
+      `INSERT INTO templates
+         (id, source, name, family, description, tags, colors, rhythm, design,
+          schema_version, ai_summary, ai_model, ai_fingerprint, is_builtin, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         name=EXCLUDED.name, family=EXCLUDED.family, description=EXCLUDED.description,
+         tags=EXCLUDED.tags, colors=EXCLUDED.colors, rhythm=EXCLUDED.rhythm,
+         design=EXCLUDED.design, ai_summary=EXCLUDED.ai_summary,
+         ai_model=EXCLUDED.ai_model, updated_at=NOW()`,
+      [
+        t.id,
+        t.source || "custom",
+        t.name,
+        t.family || "insight",
+        t.description || "",
+        JSON.stringify(t.tags || []),
+        JSON.stringify(t.colors || {}),
+        JSON.stringify(t.rhythm || {}),
+        t.design ? JSON.stringify(t.design) : null,
+        t.schemaVersion || 2,
+        t.aiSummary ? JSON.stringify(t.aiSummary) : null,
+        t.aiModel || "",
+        t.aiFingerprint || "",
+        t.source === "default"
+      ]
+    );
+    sendJson(res, 200, { ok: true, id: t.id });
+  } catch (error) {
+    console.error("[db] handleSaveTemplate:", error.message);
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
+async function handleDeleteTemplate(req, res, id) {
+  if (!id) {
+    sendJson(res, 400, { error: "id required" });
+    return;
+  }
+  try {
+    await pool.query("DELETE FROM templates WHERE id=$1 AND is_builtin=false", [id]);
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    console.error("[db] handleDeleteTemplate:", error.message);
+    sendJson(res, 500, { error: error.message });
+  }
+}
+
 async function callOpenAI(payload, config) {
   const systemContent = [
     "你是一个微信公众号文章排版总监。你只输出符合 JSON Schema 的排版决策。",
@@ -898,6 +1011,10 @@ function isGatewayTimeoutStatus(status) {
 
 function isAuthLikeStatus(status) {
   return [401, 403, 429].includes(Number(status));
+}
+
+function isAnthropicModel(model) {
+  return /claude|opus|sonnet|haiku/i.test(model || "");
 }
 
 function buildAiErrorMessage(endpoint, result) {

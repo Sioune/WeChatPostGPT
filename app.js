@@ -231,6 +231,7 @@ const els = {
   testAiConfig: document.querySelector("#testAiConfigBtn"),
   saveAiConfig: document.querySelector("#saveAiConfigBtn"),
   clearAiConfig: document.querySelector("#clearAiConfigBtn"),
+  closeAiConfig: document.querySelector("#closeAiConfigBtn"),
   aiConfigStatus: document.querySelector("#aiConfigStatus"),
   canvas: document.querySelector("#wechatCanvas"),
   htmlOutput: document.querySelector("#htmlOutput"),
@@ -256,6 +257,7 @@ function init() {
   renderImageLibrary();
   hydrateAiConfigForm();
   checkAiStatus();
+  initDbTemplates();
   loadImageAssets().then(() => {
     renderImageLibrary();
     renderFromInput({ useAi: false, passive: true });
@@ -289,18 +291,22 @@ function init() {
     const generated = await generatePersistentTemplate(analysis);
     userTemplates = [generated, ...userTemplates];
     saveUserTemplates(userTemplates);
+    saveTemplateToDb(generated);
     rebuildTemplates();
     selectedTemplateId = generated.id;
     els.mode.value = "manual";
     renderTemplateGallery();
     renderFromInput({ useAi: false });
-    els.learnSummary.textContent = `已生成模板「${generated.name}」，它会保存在本机浏览器里。`;
+    els.learnSummary.textContent = `已生成模板「${generated.name}」，已保存到数据库。`;
   });
   els.copyRich.addEventListener("click", copyRichText);
   els.copyHtml.addEventListener("click", copyHtml);
   els.testAiConfig.addEventListener("click", testAiConfig);
   els.saveAiConfig.addEventListener("click", saveAiConfigFromForm);
   els.clearAiConfig.addEventListener("click", clearAiConfig);
+  els.closeAiConfig?.addEventListener("click", () => {
+    document.querySelector(".ai-config-menu")?.removeAttribute("open");
+  });
   els.learnTemplate.addEventListener("click", learnTemplateFromReference);
   els.fetchReference.addEventListener("click", fetchReferenceFromUrl);
   els.referencePasteBox.addEventListener("paste", handleReferenceRichPaste);
@@ -802,6 +808,7 @@ function persistGeneratedAiTemplate({ template, plan, analysis, title, content, 
   runtimeTemplates = runtimeTemplates.filter((item) => item.id !== template.id);
   userTemplates = [saved, ...userTemplates].slice(0, 200);
   saveUserTemplates(userTemplates);
+  saveTemplateToDb(saved);
   rebuildTemplates();
   selectedTemplateId = saved.id;
   els.learnSummary.textContent = `AI 已将本次排版学习为新模板「${saved.name}」，后续可在模板库中搜索、复用或删除。`;
@@ -2266,27 +2273,12 @@ function createGeneratedTemplate(analysis, persistent) {
 }
 
 async function learnNativeLayoutAsTemplate(html, title, nativeLayout, seq) {
-  if (!html || !aiStatus.aiEnabled) return;
-  const styleName = nativeLayout?.designSummary?.styleName || "";
-  const suggestedName = styleName || (title ? `${title} 风格` : "AI 创意排版风格");
+  if (!html) return;
   try {
-    const learned = await requestAiLearnTemplate(html, suggestedName);
-    let template = normalizeAiTemplate(
-      learned.template,
-      analyzeArticle(suggestedName, html)
-    );
-    template = {
-      ...template,
-      id: learned.template.id || `ai-native-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
-      source: "ai-learned",
-      name: uniqueTemplateName(learned.template.name || template.name || suggestedName),
-      description: learned.summary?.visualDNA || template.description,
-      aiSummary: learned.summary || null,
-      aiEndpoint: learned.endpoint || "",
-      aiModel: learned.model || aiStatus.model
-    };
+    const template = upgradeTemplateSchema(synthesizeTemplateFromNativeLayout(html, nativeLayout));
     userTemplates = [template, ...userTemplates].slice(0, 200);
     saveUserTemplates(userTemplates);
+    saveTemplateToDb(template);
     rebuildTemplates();
     if (seq === renderSeq) {
       renderTemplateGallery(selectedTemplateId);
@@ -2338,6 +2330,7 @@ async function learnTemplateFromReference() {
 
   userTemplates = [template, ...userTemplates];
   saveUserTemplates(userTemplates);
+  saveTemplateToDb(template);
   rebuildTemplates();
   selectedTemplateId = template.id;
   els.mode.value = "manual";
@@ -2797,6 +2790,7 @@ function deleteTemplate(templateId) {
   userTemplates = userTemplates.filter((item) => item.id !== templateId);
   runtimeTemplates = runtimeTemplates.filter((item) => item.id !== templateId);
   saveUserTemplates(userTemplates);
+  deleteTemplateFromDb(templateId);
   rebuildTemplates();
 
   if (selectedTemplateId === templateId) {
@@ -2990,6 +2984,124 @@ function formatBytes(value) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+async function saveTemplateToDb(template) {
+  try {
+    await requestJson("/api/templates", {
+      method: "POST",
+      body: JSON.stringify({ template })
+    });
+  } catch (error) {
+    console.warn("[db] saveTemplateToDb failed:", error.message);
+  }
+}
+
+async function deleteTemplateFromDb(id) {
+  try {
+    await fetch(`/api/templates/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch (error) {
+    console.warn("[db] deleteTemplateFromDb failed:", error.message);
+  }
+}
+
+async function initDbTemplates() {
+  try {
+    const data = await requestJson("/api/templates");
+    const dbTemplates = Array.isArray(data.templates) ? data.templates : [];
+    const normalized = dbTemplates.map((row) =>
+      upgradeTemplateSchema({
+        ...row,
+        tags: Array.isArray(row.tags) ? row.tags : [],
+        colors: row.colors || {},
+        rhythm: row.rhythm || {},
+        design: row.design || undefined,
+        aiSummary: row.ai_summary || undefined,
+        aiModel: row.ai_model || "",
+        aiFingerprint: row.ai_fingerprint || "",
+        schemaVersion: row.schema_version || 2
+      })
+    );
+    const builtins = normalized.filter((t) => t.source === "default" || t.is_builtin);
+    const userTpls = normalized.filter((t) => t.source !== "default" && !t.is_builtin);
+    if (builtins.length === 0) {
+      DEFAULT_TEMPLATES.forEach((t) => saveTemplateToDb(t));
+    }
+    if (userTpls.length > 0) {
+      userTemplates = userTpls;
+    }
+    const defaultsToUse = builtins.length ? builtins : DEFAULT_TEMPLATES;
+    templates = [...runtimeTemplates, ...defaultsToUse, ...userTemplates];
+    renderTemplateGallery(selectedTemplateId);
+  } catch (error) {
+    console.warn("[db] initDbTemplates failed, using localStorage:", error.message);
+  }
+}
+
+function synthesizeTemplateFromNativeLayout(html, nativeLayout) {
+  const summary = nativeLayout?.designSummary || {};
+  const styleName = String(summary.styleName || "AI 创意排版风格").slice(0, 40);
+  const text = (styleName + " " + (summary.visualDNA || "")).toLowerCase();
+
+  let family = "insight";
+  if (/商业|商务|品牌|营销|金融|策略/.test(text)) family = "business";
+  else if (/科技|技术|ai|代码|产品|工具/.test(text)) family = "tech";
+  else if (/人文|随笔|故事|感性|访谈|情感/.test(text)) family = "human";
+  else if (/活动|事件|节庆|会议|直播/.test(text)) family = "event";
+  else if (/教育|知识|学习|课程|科普/.test(text)) family = "education";
+  else if (/数据|图表|统计|报告/.test(text)) family = "data";
+
+  const colorFreq = {};
+  const hexRe = /#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/g;
+  let hm;
+  while ((hm = hexRe.exec(html)) !== null) {
+    const raw = hm[0].toLowerCase();
+    const full =
+      raw.length === 4
+        ? "#" + raw[1] + raw[1] + raw[2] + raw[2] + raw[3] + raw[3]
+        : raw;
+    colorFreq[full] = (colorFreq[full] || 0) + 1;
+  }
+  const sorted = Object.entries(colorFreq)
+    .sort((a, b) => b[1] - a[1])
+    .map(([c]) => c);
+
+  function lum(hex) {
+    const r = parseInt(hex.slice(1, 3), 16),
+      g = parseInt(hex.slice(3, 5), 16),
+      b = parseInt(hex.slice(5, 7), 16);
+    return (r * 299 + g * 587 + b * 114) / 1000;
+  }
+  const lights = sorted.filter((c) => lum(c) > 160);
+  const darks = sorted.filter((c) => lum(c) <= 160);
+  const def = DEFAULT_TEMPLATES.find((t) => t.family === family) || DEFAULT_TEMPLATES[0];
+
+  return {
+    id: `ai-native-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+    source: "ai-learned",
+    name: uniqueTemplateName(styleName),
+    family,
+    description: (summary.visualDNA || summary.colorRationale || "AI 原生创意排版生成的版式").slice(0, 120),
+    tags: ["ai", "native", family],
+    colors: {
+      page: lights[0] || def.colors.page,
+      panel: lights[1] || def.colors.panel,
+      ink: darks[0] || def.colors.ink,
+      muted: darks[1] || def.colors.muted,
+      accent: darks[2] || def.colors.accent,
+      accent2: darks[3] || def.colors.accent2,
+      soft: lights[2] || def.colors.soft,
+      line: lights[3] || def.colors.line
+    },
+    rhythm: { ...def.rhythm },
+    aiSummary: {
+      styleName,
+      visualDNA: summary.visualDNA || "",
+      layoutRules: summary.layoutRules || [],
+      colorRationale: summary.colorRationale || "",
+      suitableFor: [family]
+    }
+  };
 }
 
 function loadUserTemplates() {
