@@ -648,15 +648,68 @@ async function requestAiNativeLayout(title, content, analysis) {
     densityPreference: els.density.value,
     aiConfig: getAiClientConfig()
   };
-  const data = await requestJson("/api/ai-native-layout", {
+
+  const response = await fetch("/api/ai-native-layout", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  return {
-    ...(data.native || {}),
-    model: data.model || aiStatus.model,
-    endpoint: data.endpoint || ""
-  };
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const msg =
+      (typeof data.detail === "string" && data.detail.trim()) ||
+      (typeof data.error === "string" && data.error.trim()) ||
+      response.statusText ||
+      `HTTP ${response.status}`;
+    throw new Error(msg);
+  }
+
+  if (!response.body) {
+    throw new Error("浏览器不支持流式读取，请升级浏览器后重试。");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let sseBuffer = "";
+  let currentEvent = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      throw new Error("AI 流式响应意外结束，未收到结果。");
+    }
+
+    sseBuffer += decoder.decode(value, { stream: true });
+    const lines = sseBuffer.split("\n");
+    sseBuffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        currentEvent = line.slice(7).trim();
+        continue;
+      }
+      if (!line.startsWith("data: ")) continue;
+
+      let data;
+      try { data = JSON.parse(line.slice(6)); } catch (_) { continue; }
+
+      if (currentEvent === "progress") {
+        if (els.statusLine) {
+          els.statusLine.textContent = `AI 正在生成创意排版，已生成 ${data.chars} 字符...`;
+        }
+      } else if (currentEvent === "result") {
+        return {
+          ...(data.native || {}),
+          model: data.model || aiStatus.model,
+          endpoint: data.endpoint || ""
+        };
+      } else if (currentEvent === "error") {
+        throw new Error(data.detail || "AI 原生排版生成失败");
+      }
+      currentEvent = "";
+    }
+  }
 }
 
 async function requestAiLearnTemplate(source, name) {

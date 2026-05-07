@@ -255,7 +255,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/ai-native-layout") {
-      await handleAiNativeLayout(req, res);
+      await handleAiNativeLayoutStream(req, res);
       return;
     }
 
@@ -377,6 +377,179 @@ async function handleAiNativeLayout(req, res) {
     endpoint: response.endpoint || "",
     usage: response.usage || null
   });
+}
+
+async function handleAiNativeLayoutStream(req, res) {
+  const payload = await readJsonBody(req);
+  const config = getAiConfig(payload);
+
+  if (!config.apiKey) {
+    sendJson(res, 503, {
+      error: "AI not configured",
+      detail: "请在右上角 AI 配置中填写 BaseUrl、API Key，测试连接后选择模型。"
+    });
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  res.flushHeaders();
+
+  const sendEvent = (event, data) => {
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch (_) {}
+  };
+
+  const heartbeat = setInterval(() => {
+    try { res.write(": heartbeat\n\n"); } catch (_) {}
+  }, 8000);
+
+  const cleanPayload = sanitizeNativePayload(payload);
+  const systemContent = [
+    "你是顶级微信公众号富媒体排版设计师。你要直接生成可复制到公众号后台的完整 inline HTML，而不是模板令牌。",
+    "这是 AI 原生创意排版模式：可以自由设计文头、导语、信息块、强调块、分隔、图片框、结尾和整体节奏。",
+    "目标：输出高质量、有美感、贴合文章内容、配色吸引人、移动端阅读舒服的公众号富文本成果。",
+    "硬性兼容边界：不要使用 script、style 标签、link、iframe、form、input、button、svg、canvas、video、audio；不要使用外部 CSS、事件属性、position、动画、媒体查询或复杂交互。",
+    "所有样式必须写在元素 inline style 中。优先使用 section、p、span、strong、em、blockquote、img、a、table、ul、ol、li、hr、br 等静态标签。",
+    "不要编造事实，不要大幅改写正文；可以增加少量导读标签、栏目名、强调容器和过渡句，但必须服务原文。",
+    "如果正文里有 Markdown 图片，请在 HTML 中保留同一个图片 src；本地图片引用 wechatpostgpt:image:* 也要原样放入 img src。",
+    "输出必须是一个合法 JSON 对象（不要使用 Markdown 代码块），结构如下：",
+    '{"title":"文章标题","html":"完整inline HTML","plainText":"纯文本内容摘要","designSummary":{"styleName":"风格名称","visualDNA":"视觉特征描述","layoutRules":["规则1","规则2"],"colorRationale":"配色说明"},"warnings":[]}'
+  ].join("\n");
+  const userContent = JSON.stringify(cleanPayload);
+
+  const requestBody = {
+    model: config.model,
+    messages: [
+      { role: "system", content: systemContent },
+      { role: "user", content: userContent }
+    ],
+    response_format: { type: "json_object" },
+    stream: true
+  };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+
+  try {
+    const apiResponse = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream"
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
+    });
+
+    if (!apiResponse.ok) {
+      const rawText = await apiResponse.text().catch(() => "");
+      let data = {};
+      try { data = JSON.parse(rawText); } catch (_) {}
+      const snippet = rawText.slice(0, 400).trim();
+      const errMsg =
+        data?.error?.message ||
+        (typeof data?.error === "string" ? data.error : "") ||
+        data?.message ||
+        apiResponse.statusText ||
+        snippet ||
+        `HTTP ${apiResponse.status}`;
+      console.warn(`[native-stream] HTTP ${apiResponse.status}: ${snippet || errMsg}`);
+      clearTimeout(timer);
+      clearInterval(heartbeat);
+      sendEvent("error", {
+        detail: `Chat Completions API 调用失败：HTTP ${apiResponse.status}：${errMsg}`
+      });
+      res.end();
+      return;
+    }
+
+    if (!apiResponse.body) {
+      clearTimeout(timer);
+      clearInterval(heartbeat);
+      sendEvent("error", { detail: "模型没有返回流式响应体，请确认 BaseUrl 支持流式传输（stream: true）。" });
+      res.end();
+      return;
+    }
+
+    const reader = apiResponse.body.getReader();
+    const decoder = new TextDecoder();
+    let accumulated = "";
+    let charCount = 0;
+    let lastProgressAt = 0;
+    let sseBuffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      sseBuffer += decoder.decode(value, { stream: true });
+      const lines = sseBuffer.split("\n");
+      sseBuffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === "data: [DONE]") continue;
+        if (!trimmed.startsWith("data: ")) continue;
+        try {
+          const chunk = JSON.parse(trimmed.slice(6));
+          const delta = chunk.choices?.[0]?.delta?.content ?? "";
+          if (delta) {
+            accumulated += delta;
+            charCount += delta.length;
+            if (charCount - lastProgressAt >= 300) {
+              sendEvent("progress", { chars: charCount });
+              lastProgressAt = charCount;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    clearTimeout(timer);
+    clearInterval(heartbeat);
+
+    if (!accumulated.trim()) {
+      sendEvent("error", { detail: "模型返回了空响应，请稍后重试或更换模型。" });
+      res.end();
+      return;
+    }
+
+    let native;
+    try {
+      native = parseNativeLayout(accumulated);
+    } catch (parseError) {
+      const snippet = accumulated.slice(0, 600);
+      console.warn(`[native-stream] parse failed: ${parseError.message} | snippet: ${snippet}`);
+      sendEvent("error", {
+        detail: `AI 输出解析失败：${parseError.message}（模型：${config.model}）`
+      });
+      res.end();
+      return;
+    }
+
+    sendEvent("result", {
+      native,
+      model: config.model,
+      endpoint: "Chat Completions API (streaming)"
+    });
+  } catch (error) {
+    clearTimeout(timer);
+    clearInterval(heartbeat);
+    const isAbort = error.name === "AbortError";
+    const detail = isAbort
+      ? `AI 请求超过 ${AI_REQUEST_TIMEOUT_MS / 1000} 秒限制，请尝试稍后重试。`
+      : `流式传输错误：${error.message || "网络连接失败"}`;
+    console.warn(`[native-stream] ${detail}`);
+    sendEvent("error", { detail });
+  }
+  res.end();
 }
 
 async function handleTestAiConfig(req, res) {
@@ -588,7 +761,6 @@ async function callOpenAI(payload, config) {
         content: userContent
       }
     ],
-    reasoning: { effort: "low" },
     text: {
       format: {
         type: "json_schema",
@@ -633,7 +805,6 @@ async function callOpenAIForNativeLayout(payload, config) {
         content: userContent
       }
     ],
-    reasoning: { effort: "low" },
     text: {
       format: {
         type: "json_schema",
@@ -678,7 +849,6 @@ async function callOpenAIForTemplateLearning(referenceName, source, config) {
         content: userContent
       }
     ],
-    reasoning: { effort: "low" },
     text: {
       format: {
         type: "json_schema",
