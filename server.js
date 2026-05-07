@@ -663,15 +663,19 @@ async function callAiWithFallback({ config, responseBody, systemContent, userCon
     }
   }
 
-  if (!responsesResult.ok && !isFallbackWorthyStatus(responsesResult.status)) {
-    throw new Error(`OpenAI API error: ${responsesResult.error}`);
+  // Hard-stop only on auth-style failures. Many OpenAI-compatible gateways
+  // (Anthropic Claude, DeepSeek, local proxies, etc.) don't support /responses
+  // at all and return 400/404/500 with bodies that aren't worth surfacing
+  // before we've tried the more compatible Chat Completions endpoint.
+  if (!responsesResult.ok && isAuthLikeStatus(responsesResult.status)) {
+    throw new Error(buildAiErrorMessage("Responses API", responsesResult));
   }
 
   try {
     return await callChatCompletionsWithFallback({ config, systemContent, userContent, schemaName, schema });
   } catch (chatError) {
     const responsesTimedOut = isGatewayTimeoutStatus(responsesResult.status);
-    const chatTimedOut = /timed out|gateway timeout|request timeout|504|502|503|408/i.test(
+    const chatTimedOut = /timed out|gateway timeout|request timeout|\b504\b|\b502\b|\b503\b|\b408\b/i.test(
       chatError.message || ""
     );
     if (responsesTimedOut && chatTimedOut) {
@@ -685,6 +689,19 @@ async function callAiWithFallback({ config, responseBody, systemContent, userCon
 
 function isGatewayTimeoutStatus(status) {
   return [408, 502, 503, 504].includes(Number(status));
+}
+
+function isAuthLikeStatus(status) {
+  return [401, 403, 429].includes(Number(status));
+}
+
+function buildAiErrorMessage(endpoint, result) {
+  const status = result?.status || 0;
+  const detail = String(result?.error || "").trim();
+  const parts = [`${endpoint} 调用失败`];
+  if (status) parts.push(`HTTP ${status}`);
+  if (detail) parts.push(detail);
+  return parts.join("：");
 }
 
 async function callChatCompletionsWithFallback({ config, systemContent, userContent, schemaName, schema }) {
@@ -723,13 +740,18 @@ async function callChatCompletionsWithFallback({ config, systemContent, userCont
   };
 
   const attempts = [jsonSchemaBody, jsonObjectBody, plainJsonBody];
+  let lastResult = null;
   let lastError = "";
+  let lastStatus = 0;
 
   for (const body of attempts) {
     const chatResult = await postJsonToAi(`${config.baseUrl}/chat/completions`, config.apiKey, body);
+    lastResult = chatResult;
     if (!chatResult.ok) {
       lastError = chatResult.error;
-      if (!isFallbackWorthyStatus(chatResult.status)) break;
+      lastStatus = chatResult.status;
+      // Auth/quota errors won't be fixed by trying another body shape.
+      if (isAuthLikeStatus(chatResult.status)) break;
       continue;
     }
 
@@ -738,10 +760,15 @@ async function callChatCompletionsWithFallback({ config, systemContent, userCont
       return { ...chatResult.data, output_text: outputText, endpoint: "Chat Completions API" };
     }
 
-    lastError = "OpenAI response did not include JSON content.";
+    lastStatus = chatResult.status;
+    lastError = "模型返回了空响应或无法解析的内容";
+    console.warn(
+      `[ai] chat/completions returned no usable text. shape=${JSON.stringify(Object.keys(chatResult.data || {}))}`
+    );
   }
 
-  throw new Error(`OpenAI API error: ${lastError || "Chat Completions fallback failed."}`);
+  const detail = buildAiErrorMessage("Chat Completions API", { status: lastStatus, error: lastError });
+  throw new Error(detail || "Chat Completions API 调用失败");
 }
 
 async function postJsonToAi(url, apiKey, body) {
@@ -758,22 +785,37 @@ async function postJsonToAi(url, apiKey, body) {
       signal: controller.signal
     });
 
-    const data = await apiResponse.json().catch(() => ({}));
+    const rawText = await apiResponse.text();
+    let data = {};
+    try {
+      data = rawText ? JSON.parse(rawText) : {};
+    } catch (_error) {
+      data = {};
+    }
+
     if (!apiResponse.ok) {
-      return {
-        ok: false,
-        status: apiResponse.status,
-        data,
-        error: data.error?.message || data.message || apiResponse.statusText
-      };
+      const snippet = rawText ? String(rawText).slice(0, 400).trim() : "";
+      const error =
+        data?.error?.message ||
+        (typeof data?.error === "string" ? data.error : "") ||
+        data?.message ||
+        apiResponse.statusText ||
+        snippet ||
+        `HTTP ${apiResponse.status}`;
+      console.warn(
+        `[ai] ${url} -> HTTP ${apiResponse.status} ${apiResponse.statusText || ""} body=${snippet || "<empty>"}`
+      );
+      return { ok: false, status: apiResponse.status, data, error };
     }
     return { ok: true, status: apiResponse.status, data };
   } catch (error) {
+    const isAbort = error.name === "AbortError";
+    console.warn(`[ai] ${url} -> network error: ${error.message}`);
     return {
       ok: false,
-      status: error.name === "AbortError" ? 408 : 0,
+      status: isAbort ? 408 : 0,
       data: null,
-      error: error.name === "AbortError" ? "AI request timed out." : error.message
+      error: isAbort ? "AI request timed out." : error.message || "Network error"
     };
   } finally {
     clearTimeout(timer);
