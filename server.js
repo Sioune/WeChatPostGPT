@@ -433,9 +433,6 @@ async function handleAiNativeLayoutStream(req, res) {
     stream: true
   };
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
-
   try {
     const apiResponse = await fetch(`${config.baseUrl}/chat/completions`, {
       method: "POST",
@@ -444,8 +441,7 @@ async function handleAiNativeLayoutStream(req, res) {
         "Content-Type": "application/json",
         Accept: "text/event-stream"
       },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal
+      body: JSON.stringify(requestBody)
     });
 
     if (!apiResponse.ok) {
@@ -540,12 +536,8 @@ async function handleAiNativeLayoutStream(req, res) {
       endpoint: "Chat Completions API (streaming)"
     });
   } catch (error) {
-    clearTimeout(timer);
     clearInterval(heartbeat);
-    const isAbort = error.name === "AbortError";
-    const detail = isAbort
-      ? `AI 请求超过 ${AI_REQUEST_TIMEOUT_MS / 1000} 秒限制，请尝试稍后重试。`
-      : `流式传输错误：${error.message || "网络连接失败"}`;
+    const detail = `流式传输错误：${error.message || "网络连接失败"}`;
     console.warn(`[native-stream] ${detail}`);
     sendEvent("error", { detail });
   }
