@@ -360,11 +360,16 @@ async function renderFromInput(options = {}) {
         els.canvas.innerHTML = html;
         els.htmlOutput.value = html;
         els.statusLine.textContent = `${nativeLayout.designSummary?.styleName || "AI 原生创意排版"}｜AI 已直接生成富媒体 HTML｜${analysis.typeLabel}｜约 ${analysis.readingMinutes} 分钟读完`;
-        els.learnSummary.textContent =
-          "AI 原生创意排版已生成。若要把这次效果沉淀为结构化模板，可复制右侧 HTML 到参考文章学习区再学习为模板。";
+        const willLearnAsTemplate = els.mode.value === "generate" && aiStatus.aiEnabled;
+        els.learnSummary.textContent = willLearnAsTemplate
+          ? `AI 创意排版已生成，正在把本次效果学习为新模板（使用模型 ${aiStatus.model}）...`
+          : "AI 原生创意排版已生成。若要把这次效果沉淀为结构化模板，可复制右侧 HTML 到参考文章学习区再学习为模板。";
         renderNativeAnalysis(analysis, nativeLayout);
         renderTemplateGallery(selectedTemplateId);
         renderCompatReport(html);
+        if (willLearnAsTemplate) {
+          learnNativeLayoutAsTemplate(html, title, nativeLayout, seq);
+        }
         return;
       } catch (error) {
         if (seq !== renderSeq) return;
@@ -2258,6 +2263,40 @@ function createGeneratedTemplate(analysis, persistent) {
       DEFAULT_TEMPLATES.some((item) => item.family === family) ? family : "insight"
     )
   };
+}
+
+async function learnNativeLayoutAsTemplate(html, title, nativeLayout, seq) {
+  if (!html || !aiStatus.aiEnabled) return;
+  const styleName = nativeLayout?.designSummary?.styleName || "";
+  const suggestedName = styleName || (title ? `${title} 风格` : "AI 创意排版风格");
+  try {
+    const learned = await requestAiLearnTemplate(html, suggestedName);
+    let template = normalizeAiTemplate(
+      learned.template,
+      analyzeArticle(suggestedName, html)
+    );
+    template = {
+      ...template,
+      id: learned.template.id || `ai-native-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+      source: "ai-learned",
+      name: uniqueTemplateName(learned.template.name || template.name || suggestedName),
+      description: learned.summary?.visualDNA || template.description,
+      aiSummary: learned.summary || null,
+      aiEndpoint: learned.endpoint || "",
+      aiModel: learned.model || aiStatus.model
+    };
+    userTemplates = [template, ...userTemplates].slice(0, 200);
+    saveUserTemplates(userTemplates);
+    rebuildTemplates();
+    if (seq === renderSeq) {
+      renderTemplateGallery(selectedTemplateId);
+      els.learnSummary.textContent = `已将本次 AI 创意排版学习为新模板「${template.name}」，可在模板库中搜索、复用或删除。`;
+    }
+  } catch (error) {
+    if (seq === renderSeq) {
+      els.learnSummary.textContent = `AI 创意排版已生成，但学习为模板失败：${error.message}`;
+    }
+  }
 }
 
 async function learnTemplateFromReference() {
