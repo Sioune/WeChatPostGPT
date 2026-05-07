@@ -1,0 +1,240 @@
+/* Variant B — Premium Studio
+   Refines the original with a deeper jade palette, warm gold accents,
+   layered shadows, and more generous spacing. */
+
+:root {
+  --app-bg: #f3efe8;
+  --panel: #ffffff;
+  --ink: #161b18;
+  --muted: #6b7670;
+  --line: rgba(22, 27, 24, 0.07);
+  --line-strong: rgba(22, 27, 24, 0.12);
+  --accent: #0a5b4a;
+  --accent-dark: #053a2f;
+  --accent-soft: #e6f1ec;
+  --gold: #c89b3c;
+  --gold-soft: #f5ead0;
+  --warn: #b45309;
+  --shadow:
+    0 1px 0 rgba(255,255,255,0.7) inset,
+    0 1px 2px rgba(20, 35, 28, 0.04),
+    0 16px 32px -20px rgba(20, 35, 28, 0.18),
+    0 40px 80px -40px rgba(10, 91, 74, 0.18);
+}
+
+body {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(200, 155, 60, 0.08), transparent 38%),
+    radial-gradient(circle at 0% 100%, rgba(10, 91, 74, 0.08), transparent 42%),
+    linear-gradient(160deg, #f5f1ea 0%, #ece8df 100%);
+  color: var(--ink);
+}
+
+.app-shell { padding: 30px 30px 44px; }
+
+.topbar {
+  background: rgba(255,255,255,0.55);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 22px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  margin-bottom: 24px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 12px 32px -24px rgba(20,35,28,0.18);
+}
+.topbar h1 {
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  font-size: clamp(28px, 3.1vw, 42px);
+  background: linear-gradient(135deg, #0a5b4a 0%, #053a2f 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.eyebrow {
+  color: var(--gold);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  font-weight: 800;
+}
+
+.workspace { gap: 26px; }
+
+.panel {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(252,250,246,1) 100%);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 26px 26px 28px;
+}
+
+.panel h2 {
+  font-weight: 700;
+  letter-spacing: -0.018em;
+  font-size: 22px;
+}
+
+.panel-heading,
+.preview-toolbar,
+.section-heading {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 18px;
+}
+.section-heading h3 {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.005em;
+}
+.section-heading span { color: var(--muted); font-size: 12px; }
+
+.field span {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+input[type="text"],
+input[type="url"],
+input[type="password"],
+input[type="search"],
+select,
+textarea,
+.rich-paste-box {
+  border: 1px solid var(--line-strong) !important;
+  border-radius: 10px !important;
+  background: #ffffff !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 2px rgba(20,35,28,0.03);
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+input:focus, select:focus, textarea:focus, .rich-paste-box:focus {
+  outline: none !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(10, 91, 74, 0.14), 0 1px 0 rgba(255,255,255,0.6) inset !important;
+}
+
+.primary-btn,
+.primary-link {
+  background: linear-gradient(180deg, #0a5b4a 0%, #074c3e 100%);
+  border-radius: 10px;
+  border: 1px solid #053a2f;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.18) inset,
+    0 1px 2px rgba(5, 58, 47, 0.18),
+    0 8px 20px -10px rgba(10, 91, 74, 0.45);
+}
+.primary-btn:hover,
+.primary-link:hover {
+  background: linear-gradient(180deg, #0d6e58 0%, #074c3e 100%);
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.22) inset,
+    0 2px 4px rgba(5, 58, 47, 0.18),
+    0 14px 28px -12px rgba(10, 91, 74, 0.5);
+}
+
+.ghost-btn,
+.file-btn,
+.icon-btn {
+  background: rgba(255,255,255,0.7);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  color: var(--ink);
+  font-weight: 500;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+}
+.ghost-btn:hover, .file-btn:hover, .icon-btn:hover {
+  background: #ffffff;
+  border-color: var(--accent);
+  color: var(--accent-dark);
+}
+
+.badge {
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  background: var(--gold-soft);
+  color: #7a5a17;
+  border: 1px solid rgba(200, 155, 60, 0.35);
+}
+.badge[data-state="ok"] {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  border-color: rgba(10, 91, 74, 0.25);
+}
+
+.analysis-card {
+  background:
+    linear-gradient(180deg, #ffffff 0%, #fbfaf6 100%);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.7) inset, 0 6px 16px -12px rgba(20,35,28,0.12);
+}
+.analysis-card strong { font-weight: 700; letter-spacing: -0.005em; }
+
+.template-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #fbfaf6 100%);
+  padding: 16px 16px 14px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.7) inset, 0 8px 18px -14px rgba(20,35,28,0.12);
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.template-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(10, 91, 74, 0.35);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.7) inset, 0 16px 32px -18px rgba(10,91,74,0.28);
+}
+.template-card.active {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px rgba(10, 91, 74, 0.5),
+    0 1px 0 rgba(255,255,255,0.7) inset,
+    0 18px 36px -18px rgba(10, 91, 74, 0.32);
+}
+.template-card strong { font-weight: 700; letter-spacing: -0.005em; font-size: 15px; }
+.template-card p { color: var(--muted); }
+
+.swatches { gap: 5px; }
+.swatch {
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(22,27,24,0.06) inset;
+}
+
+details.learner,
+details.image-tools,
+.source-box {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfaf6 100%);
+}
+
+.phone-frame {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.8) inset,
+    0 18px 40px -28px rgba(20,35,28,0.22),
+    0 60px 100px -60px rgba(10,91,74,0.16);
+}
+
+.status-line {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: rgba(255,255,255,0.6);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--gold);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
