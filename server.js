@@ -499,6 +499,40 @@ async function handleAiNativeLayoutStream(req, res) {
       apiResponse = await fetch(`${config.baseUrl}/chat/completions`, fetchOptions);
     }
 
+    // Non-streaming fallback for Cloudflare proxy errors (520/521/522/524)
+    // These happen when the proxy can't handle stream:true for some models
+    if (!apiResponse.ok && isCloudflareError(apiResponse.status)) {
+      console.warn(`[native-stream] HTTP ${apiResponse.status} (Cloudflare), retrying without streaming...`);
+      sendEvent("progress", { chars: 0, hint: "代理不支持流式传输，正在切换为普通模式重试..." });
+      const nsBody = { ...requestBody, stream: false };
+      const nsOptions = {
+        method: "POST",
+        headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(nsBody)
+      };
+      const nsResponse = await fetch(`${config.baseUrl}/chat/completions`, nsOptions);
+      if (nsResponse.ok) {
+        const json = await nsResponse.json().catch(() => null);
+        const content = json?.choices?.[0]?.message?.content || "";
+        if (content) {
+          clearInterval(heartbeat);
+          let native;
+          try {
+            native = parseNativeLayout(content);
+          } catch (parseError) {
+            sendEvent("error", { detail: `AI 输出解析失败：${parseError.message}（模型：${config.model}）` });
+            res.end();
+            return;
+          }
+          sendEvent("result", { native, model: config.model, endpoint: "Chat Completions API (non-streaming)" });
+          res.end();
+          return;
+        }
+      }
+      // Fall through to error handling with the non-streaming response status
+      apiResponse = nsResponse;
+    }
+
     if (!apiResponse.ok) {
       const rawText = await apiResponse.text().catch(() => "");
       let data = {};
@@ -1020,6 +1054,10 @@ async function callAiWithFallback({ config, responseBody, systemContent, userCon
 
 function isGatewayTimeoutStatus(status) {
   return [408, 502, 503, 504].includes(Number(status));
+}
+
+function isCloudflareError(status) {
+  return [520, 521, 522, 523, 524, 525, 526, 530].includes(Number(status));
 }
 
 function isAuthLikeStatus(status) {
