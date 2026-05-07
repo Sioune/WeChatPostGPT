@@ -280,8 +280,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`WeChatPostGPT is running at http://localhost:${PORT}`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`WeChatPostGPT is running at http://0.0.0.0:${PORT}`);
   console.log(
     OPENAI_API_KEY
       ? `Server fallback AI config enabled with ${OPENAI_MODEL}`
