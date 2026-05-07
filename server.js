@@ -301,8 +301,31 @@ async function handleAiLayout(req, res) {
   }
 
   const cleanPayload = sanitizePayload(payload);
-  const response = await callOpenAI(cleanPayload, config);
-  const plan = parsePlan(response.output_text);
+  let response;
+  try {
+    response = await callOpenAI(cleanPayload, config);
+  } catch (aiError) {
+    console.warn(`[ai-layout] AI call failed: ${aiError.message}`);
+    sendJson(res, 502, {
+      error: "AI 调用失败",
+      detail: aiError.message || "AI 模型未返回有效内容，请检查模型配置或稍后重试。"
+    });
+    return;
+  }
+
+  let plan;
+  try {
+    plan = parsePlan(response.output_text);
+  } catch (parseError) {
+    const snippet = String(response.output_text || "").slice(0, 500);
+    console.warn(`[ai-layout] parse failed: ${parseError.message} | output_text snippet: ${snippet}`);
+    sendJson(res, 422, {
+      error: "AI 输出解析失败",
+      detail: `${parseError.message}（模型：${config.model}，端点：${response.endpoint || "?"}）`
+    });
+    return;
+  }
+
   sendJson(res, 200, {
     plan,
     model: config.model,
@@ -323,8 +346,31 @@ async function handleAiNativeLayout(req, res) {
   }
 
   const cleanPayload = sanitizeNativePayload(payload);
-  const response = await callOpenAIForNativeLayout(cleanPayload, config);
-  const native = parseNativeLayout(response.output_text);
+  let response;
+  try {
+    response = await callOpenAIForNativeLayout(cleanPayload, config);
+  } catch (aiError) {
+    console.warn(`[native-layout] AI call failed: ${aiError.message}`);
+    sendJson(res, 502, {
+      error: "AI 调用失败",
+      detail: aiError.message || "AI 模型未返回有效内容，请检查模型配置或稍后重试。"
+    });
+    return;
+  }
+
+  let native;
+  try {
+    native = parseNativeLayout(response.output_text);
+  } catch (parseError) {
+    const snippet = String(response.output_text || "").slice(0, 500);
+    console.warn(`[native-layout] parse failed: ${parseError.message} | output_text snippet: ${snippet}`);
+    sendJson(res, 422, {
+      error: "AI 输出解析失败",
+      detail: `${parseError.message}（模型：${config.model}，端点：${response.endpoint || "?"}）`
+    });
+    return;
+  }
+
   sendJson(res, 200, {
     native,
     model: config.model,
