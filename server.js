@@ -499,11 +499,11 @@ async function handleAiNativeLayoutStream(req, res) {
       apiResponse = await fetch(`${config.baseUrl}/chat/completions`, fetchOptions);
     }
 
-    // Non-streaming fallback for Cloudflare proxy errors (520/521/522/524)
-    // These happen when the proxy can't handle stream:true for some models
-    if (!apiResponse.ok && isCloudflareError(apiResponse.status)) {
-      console.warn(`[native-stream] HTTP ${apiResponse.status} (Cloudflare), retrying without streaming...`);
-      sendEvent("progress", { chars: 0, hint: "代理不支持流式传输，正在切换为普通模式重试..." });
+    // Non-streaming fallback for any proxy error that rejects stream:true
+    // Covers Cloudflare (520/521/522/524) and persistent gateway timeouts (504 etc.)
+    if (!apiResponse.ok && (isCloudflareError(apiResponse.status) || isGatewayTimeoutStatus(apiResponse.status))) {
+      console.warn(`[native-stream] HTTP ${apiResponse.status}, retrying without streaming...`);
+      sendEvent("progress", { chars: 0, hint: "流式请求受阻，正在切换为普通模式重试..." });
       const nsBody = { ...requestBody, stream: false };
       const nsOptions = {
         method: "POST",
