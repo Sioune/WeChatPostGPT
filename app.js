@@ -707,7 +707,8 @@ async function requestAiNativeLayout(title, content, analysis) {
 
       if (currentEvent === "progress") {
         if (els.statusLine) {
-          els.statusLine.textContent = `AI 正在生成创意排版，已生成 ${data.chars} 字符...`;
+          els.statusLine.textContent =
+            data.hint || `AI 正在生成创意排版，已生成 ${data.chars} 字符...`;
         }
       } else if (currentEvent === "result") {
         return {

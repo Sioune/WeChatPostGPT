@@ -479,7 +479,7 @@ async function handleAiNativeLayoutStream(req, res) {
   }
 
   try {
-    const apiResponse = await fetch(`${config.baseUrl}/chat/completions`, {
+    const fetchOptions = {
       method: "POST",
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
@@ -487,7 +487,17 @@ async function handleAiNativeLayoutStream(req, res) {
         Accept: "text/event-stream"
       },
       body: JSON.stringify(requestBody)
-    });
+    };
+
+    let apiResponse = await fetch(`${config.baseUrl}/chat/completions`, fetchOptions);
+
+    // One automatic retry on gateway timeout — large models (Opus etc.) can be slow to start
+    if (!apiResponse.ok && isGatewayTimeoutStatus(apiResponse.status)) {
+      console.warn(`[native-stream] HTTP ${apiResponse.status} on first attempt, retrying in 3s...`);
+      sendEvent("progress", { chars: 0, hint: "AI 网关超时，正在自动重试（大型模型需要更长时间启动）..." });
+      await new Promise((r) => setTimeout(r, 3000));
+      apiResponse = await fetch(`${config.baseUrl}/chat/completions`, fetchOptions);
+    }
 
     if (!apiResponse.ok) {
       const rawText = await apiResponse.text().catch(() => "");
@@ -503,8 +513,11 @@ async function handleAiNativeLayoutStream(req, res) {
         `HTTP ${apiResponse.status}`;
       console.warn(`[native-stream] HTTP ${apiResponse.status}: ${snippet || errMsg}`);
       clearInterval(heartbeat);
+      const isTimeout = isGatewayTimeoutStatus(apiResponse.status);
       sendEvent("error", {
-        detail: `Chat Completions API 调用失败：HTTP ${apiResponse.status}：${errMsg}`
+        detail: isTimeout
+          ? `AI 网关超时（${apiResponse.status}）：大型模型响应较慢。建议：① 缩短正文篇幅；② 稍候片刻再试；③ 切换响应更快的模型（如 claude-3-5-haiku-20241022）`
+          : `Chat Completions API 调用失败：HTTP ${apiResponse.status}：${errMsg}`
       });
       res.end();
       return;
