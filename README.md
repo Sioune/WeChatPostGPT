@@ -56,6 +56,8 @@ npm.cmd start
 
 调研见 [docs/research.md](./docs/research.md)。核心判断是：公众号排版工具的稳定路线不是复杂网页能力，而是把结构化内容渲染成静态、内联样式的富文本。成熟工具通常围绕 Markdown 写作、主题模板、实时预览、CSS 内联、一键复制/分发、图片托管和本地保存展开。
 
+开发过程复盘见 [docs/development-summary.md](./docs/development-summary.md)，主要记录 Codex 如何协助把一个想法逐步开发成可用的 AI 公众号排版工具。
+
 ## 文件说明
 
 - `index.html`：应用界面。
@@ -63,6 +65,7 @@ npm.cmd start
 - `app.js`：前端智能体逻辑、模板库、模板学习、渲染和复制。
 - `server.js`：本地静态服务器和 OpenAI API 代理，保护 API Key 不暴露到浏览器。
 - `docs/research.md`：调研记录和设计依据。
+- `docs/development-summary.md`：面向普通读者的开发过程复盘。
 
 ## AI 配置
 
