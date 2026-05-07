@@ -13,7 +13,7 @@ const MAX_RAW_FETCH_BYTES = 12_000_000;
 const MAX_DISTILLED_REFERENCE_BYTES = 420_000;
 const MAX_AI_REFERENCE_BYTES = 55_000;
 const FETCH_TIMEOUT_MS = 12_000;
-const AI_REQUEST_TIMEOUT_MS = 90_000;
+const AI_REQUEST_TIMEOUT_MS = 180_000;
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -587,7 +587,7 @@ async function callOpenAIForNativeLayout(payload, config) {
         content: userContent
       }
     ],
-    reasoning: { effort: "medium" },
+    reasoning: { effort: "low" },
     text: {
       format: {
         type: "json_schema",
@@ -667,7 +667,24 @@ async function callAiWithFallback({ config, responseBody, systemContent, userCon
     throw new Error(`OpenAI API error: ${responsesResult.error}`);
   }
 
-  return callChatCompletionsWithFallback({ config, systemContent, userContent, schemaName, schema });
+  try {
+    return await callChatCompletionsWithFallback({ config, systemContent, userContent, schemaName, schema });
+  } catch (chatError) {
+    const responsesTimedOut = isGatewayTimeoutStatus(responsesResult.status);
+    const chatTimedOut = /timed out|gateway timeout|request timeout|504|502|503|408/i.test(
+      chatError.message || ""
+    );
+    if (responsesTimedOut && chatTimedOut) {
+      throw new Error(
+        "AI 网关超时（Gateway Timeout）：上游模型服务在限定时间内没有返回结果。可尝试：1) 缩短正文或拆成多段；2) 在「AI 配置」中切换到响应更快的模型；3) 稍后再试。"
+      );
+    }
+    throw chatError;
+  }
+}
+
+function isGatewayTimeoutStatus(status) {
+  return [408, 502, 503, 504].includes(Number(status));
 }
 
 async function callChatCompletionsWithFallback({ config, systemContent, userContent, schemaName, schema }) {
