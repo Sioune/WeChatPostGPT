@@ -457,7 +457,6 @@ async function handleAiNativeLayoutStream(req, res) {
         snippet ||
         `HTTP ${apiResponse.status}`;
       console.warn(`[native-stream] HTTP ${apiResponse.status}: ${snippet || errMsg}`);
-      clearTimeout(timer);
       clearInterval(heartbeat);
       sendEvent("error", {
         detail: `Chat Completions API 调用失败：HTTP ${apiResponse.status}：${errMsg}`
@@ -467,7 +466,6 @@ async function handleAiNativeLayoutStream(req, res) {
     }
 
     if (!apiResponse.body) {
-      clearTimeout(timer);
       clearInterval(heartbeat);
       sendEvent("error", { detail: "模型没有返回流式响应体，请确认 BaseUrl 支持流式传输（stream: true）。" });
       res.end();
@@ -508,7 +506,6 @@ async function handleAiNativeLayoutStream(req, res) {
       }
     }
 
-    clearTimeout(timer);
     clearInterval(heartbeat);
 
     if (!accumulated.trim()) {
